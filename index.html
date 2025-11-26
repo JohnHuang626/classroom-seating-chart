@@ -1,0 +1,1015 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>班級座位表產生器</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Import html2canvas for image generation -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700&display=swap');
+        
+        body {
+            font-family: 'Noto Sans TC', sans-serif;
+            background-color: #f3f4f6;
+        }
+
+        .seat {
+            transition: all 0.2s ease;
+            user-select: none;
+        }
+
+        .seat.dragging {
+            opacity: 0.5;
+            transform: scale(0.95);
+        }
+
+        .seat-content {
+            cursor: pointer;
+        }
+        
+        .seat-content:active {
+            cursor: grabbing;
+        }
+
+        /* Disabled Seat Styling */
+        .disabled-seat {
+            background-color: #e5e7eb;
+            background-image: repeating-linear-gradient(
+                45deg,
+                transparent,
+                transparent 10px,
+                #d1d5db 10px,
+                #d1d5db 20px
+            );
+            border-color: #9ca3af;
+            cursor: pointer;
+        }
+        
+        .disabled-seat::after {
+            content: "✕";
+            font-size: 2rem;
+            color: #9ca3af;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+        }
+
+        /* Setup Mode Highlight */
+        .setup-mode .seat:not(.disabled-seat):empty::after,
+        .setup-mode .seat:not(.disabled-seat) .seat-empty-text {
+            content: "點擊停用";
+            color: #ef4444;
+            font-size: 0.8rem;
+            display: block;
+        }
+        
+        .setup-mode .seat {
+            border: 2px dashed #3b82f6;
+        }
+
+        /* Hover effect for clickable seats */
+        .seat:not(.disabled-seat):hover {
+            border-color: #3b82f6;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+        }
+
+        /* --- Teacher View Transformations --- */
+        .teacher-view #classroom-layout {
+            flex-direction: column-reverse;
+        }
+        
+        .teacher-view #seatingGrid {
+            transform: rotate(180deg);
+        }
+
+        .teacher-view #seatingGrid .seat {
+            transform: rotate(-180deg);
+        }
+        
+        .teacher-view #podium-area {
+            flex-direction: row-reverse;
+            padding-bottom: 0;
+            padding-top: 1rem;
+        }
+        
+        .teacher-view .blackboard-banner {
+            border-radius: 0 0 0.5rem 0.5rem;
+        }
+
+        @media print {
+            .no-print {
+                display: none !important;
+            }
+            body {
+                background-color: white;
+            }
+            .seat-grid {
+                border: 2px solid #000;
+            }
+            .seat {
+                border: 1px solid #000;
+                background-color: white !important;
+                color: black !important;
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+            }
+            .disabled-seat {
+                background: #eee !important;
+                background-image: none !important;
+            }
+            .disabled-seat::after {
+                content: "不使用";
+                font-size: 1rem;
+                color: #000;
+            }
+            
+            /* Print Layout Fixes */
+            .teacher-view #classroom-layout {
+                flex-direction: column-reverse !important;
+            }
+            .teacher-view #seatingGrid {
+                transform: rotate(180deg) !important;
+            }
+            .teacher-view #seatingGrid .seat {
+                transform: rotate(-180deg) !important;
+            }
+            .teacher-view #podium-area {
+                flex-direction: row-reverse !important;
+            }
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col items-center py-8">
+
+    <div class="w-full max-w-5xl px-4">
+        <!-- Header -->
+        <div class="text-center mb-8 no-print">
+            <h1 class="text-3xl font-bold text-gray-800 mb-2">班級座位表排版系統</h1>
+            <p class="text-gray-600">
+                <span class="bg-blue-100 text-blue-800 px-2 py-1 rounded text-sm font-bold mr-2">自動存檔中</span>
+                系統會自動記憶目前的座位，關閉後重開不會消失
+            </p>
+        </div>
+
+        <!-- Controls -->
+        <div class="bg-white p-6 rounded-lg shadow-md mb-8 flex flex-col gap-4 no-print">
+            <!-- Row 1: Main Actions -->
+            <div class="flex flex-wrap gap-4 items-center justify-between">
+                <div class="flex flex-wrap gap-3">
+                    <button type="button" onclick="shuffleSeats()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg shadow transition flex items-center gap-2">
+                        <svg class="pointer-events-none" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="5" ry="5"></rect><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"></path><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"></line></svg>
+                        隨機安排
+                    </button>
+                    <button type="button" onclick="confirmClearSeats()" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg shadow transition flex items-center gap-2 border-2 border-red-800">
+                        <svg class="pointer-events-none" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path></svg>
+                        清空所有學生
+                    </button>
+                    <button type="button" onclick="confirmResetOrder()" class="bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded-lg shadow transition">
+                        按座號重置
+                    </button>
+                </div>
+                
+                <div class="flex flex-wrap gap-3">
+                    <!-- History Buttons -->
+                    <button type="button" onclick="saveToHistory()" class="bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-2 px-4 rounded-lg shadow transition flex items-center gap-2">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
+                        儲存紀錄
+                    </button>
+                    <button type="button" onclick="openHistoryModal()" class="bg-gray-700 hover:bg-gray-800 text-white font-bold py-2 px-4 rounded-lg shadow transition flex items-center gap-2">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+                        歷史紀錄
+                    </button>
+                </div>
+            </div>
+            
+            <!-- Row 1.5: Setup & View (Separated for clarity) -->
+            <div class="flex flex-wrap gap-4 items-center justify-between border-t pt-4">
+                 <div class="flex flex-wrap gap-3">
+                    <button id="viewToggleBtn" type="button" onclick="toggleViewMode()" class="bg-indigo-500 hover:bg-indigo-600 text-white font-bold py-2 px-4 rounded-lg shadow transition flex items-center gap-2">
+                        <svg class="pointer-events-none" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                        視角：學生看黑板
+                    </button>
+                    <button id="setupBtn" type="button" onclick="toggleSetupMode()" class="bg-orange-500 hover:bg-orange-600 text-white font-bold py-2 px-4 rounded-lg shadow transition flex items-center gap-2">
+                        <svg class="pointer-events-none" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                        設定不可用座位
+                    </button>
+                </div>
+                
+                <div class="flex flex-wrap gap-3">
+                    <button type="button" onclick="toggleEditModal()" class="text-blue-600 hover:text-blue-800 font-medium underline flex items-center gap-1">
+                        <svg class="pointer-events-none" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                        編輯學生名單
+                    </button>
+                    
+                    <!-- Image Download Button -->
+                    <button type="button" onclick="downloadImage()" class="bg-teal-600 hover:bg-teal-700 text-white font-bold py-2 px-6 rounded-lg shadow transition flex items-center gap-2">
+                        <svg class="pointer-events-none" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                        下載圖片
+                    </button>
+
+                    <!-- Enhanced Print Button -->
+                    <button type="button" id="printBtn" onclick="handlePrint()" title="自動轉成圖片列印" class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-6 rounded-lg shadow transition flex items-center gap-2">
+                        <svg class="pointer-events-none" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"></polyline><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect x="6" y="14" width="12" height="8"></rect></svg>
+                        <span>列印</span>
+                    </button>
+                </div>
+            </div>
+            
+            <div class="text-xs text-gray-400 text-right w-full mt-1 print:hidden">
+                * 系統會自動儲存每次的變更，重新開啟網頁時會自動還原。
+            </div>
+        </div>
+
+        <!-- Classroom Layout Container (Target for Image Generation) -->
+        <div id="classroom-wrapper" class="w-full bg-white p-4 rounded-lg">
+            <div id="classroom-layout" class="flex flex-col w-full">
+                <!-- Podium Area (Includes Special Seats and Banner) -->
+                <div id="podium-area" class="flex justify-between items-end gap-2 mb-4">
+                    <!-- Left Special Seat Container (Index 36) -->
+                    <div id="special-seat-left" class="w-[15%] aspect-[4/3] flex-shrink-0">
+                        <!-- Seat injected here -->
+                    </div>
+
+                    <!-- Blackboard Banner -->
+                    <div class="blackboard-banner flex-1 bg-gray-800 text-white text-center py-3 rounded-lg shadow-sm print:bg-gray-200 print:text-black print:border-2 print:border-black flex items-center justify-center self-stretch">
+                        <span class="text-lg tracking-widest">講台 / 黑板</span>
+                    </div>
+
+                    <!-- Right Special Seat Container (Index 37) -->
+                    <div id="special-seat-right" class="w-[15%] aspect-[4/3] flex-shrink-0">
+                        <!-- Seat injected here -->
+                    </div>
+                </div>
+
+                <!-- Seating Grid -->
+                <div id="seatingGrid" class="grid grid-cols-6 gap-3 w-full seat-grid mb-8 transition-transform duration-500">
+                    <!-- Grid generated by JS -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit Student List Modal -->
+    <div id="editModal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50 no-print">
+        <div class="bg-white rounded-lg p-6 w-full max-w-lg shadow-xl">
+            <h2 class="text-xl font-bold mb-4">編輯學生名單</h2>
+            <p class="text-sm text-gray-500 mb-2">每行輸入一個名字，格式推薦：座號 姓名</p>
+            <textarea id="studentListInput" class="w-full h-64 p-3 border border-gray-300 rounded-md font-mono text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none mb-4"></textarea>
+            <div class="flex justify-end gap-3">
+                <button type="button" onclick="toggleEditModal()" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg transition">取消</button>
+                <button type="button" onclick="saveStudentList()" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition">儲存並更新</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- History List Modal -->
+    <div id="historyModal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50 no-print">
+        <div class="bg-white rounded-lg p-6 w-full max-w-2xl shadow-xl flex flex-col max-h-[80vh]">
+            <div class="flex justify-between items-center mb-4 border-b pb-2">
+                <h2 class="text-xl font-bold">歷史紀錄</h2>
+                <button type="button" onclick="closeHistoryModal()" class="text-gray-500 hover:text-gray-700 text-2xl">&times;</button>
+            </div>
+            <div class="overflow-y-auto flex-1 pr-2">
+                <div id="historyListContainer" class="space-y-3">
+                    <!-- History items will be injected here -->
+                    <p class="text-center text-gray-500 py-4">尚無儲存的紀錄</p>
+                </div>
+            </div>
+            <div class="mt-4 pt-2 border-t text-right">
+                 <button type="button" onclick="closeHistoryModal()" class="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300 font-bold">關閉</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Confirmation/Alert Modal -->
+    <div id="confirmModal" class="fixed inset-0 bg-black bg-opacity-60 hidden items-center justify-center z-50 no-print">
+        <div class="bg-white rounded-lg p-6 w-full max-w-sm shadow-2xl text-center transform transition-all scale-100">
+            <div class="mb-4">
+                 <svg id="modalIcon" class="mx-auto h-12 w-12 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                 </svg>
+            </div>
+            <h3 class="text-lg font-bold mb-2 text-gray-900" id="confirmTitle">提示</h3>
+            <p class="text-gray-600 mb-6 text-sm" id="confirmMessage">Message goes here</p>
+            
+            <!-- Input for saving history -->
+            <div id="inputContainer" class="hidden mb-4">
+                <input type="text" id="confirmInput" class="w-full border p-2 rounded" placeholder="請輸入紀錄名稱 (例如: 10月座位)">
+            </div>
+
+            <div class="flex justify-center gap-3">
+                <button id="confirmCancelBtn" onclick="closeConfirmModal()" class="px-4 py-2 bg-gray-200 text-gray-800 hover:bg-gray-300 rounded-lg font-medium transition">取消</button>
+                <button id="confirmOkBtn" class="px-4 py-2 bg-blue-600 text-white hover:bg-blue-700 rounded-lg font-bold shadow-md transition transform active:scale-95">確定</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Student Selector Modal -->
+    <div id="selectorModal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50 no-print" onclick="if(event.target === this) closeSelectorModal()">
+        <div class="bg-white rounded-lg p-6 w-full max-w-2xl shadow-xl flex flex-col max-h-[90vh]">
+            <div class="flex justify-between items-center mb-4 border-b pb-2">
+                <h2 class="text-xl font-bold">選擇學生入座</h2>
+                <button type="button" onclick="closeSelectorModal()" class="text-gray-500 hover:text-gray-700 text-2xl">&times;</button>
+            </div>
+            <p id="selectorTargetText" class="text-gray-600 mb-4 font-bold bg-yellow-50 p-2 rounded">正在選擇位置：</p>
+            
+            <div class="overflow-y-auto flex-1">
+                <div id="studentSelectorGrid" class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
+                    <!-- Student buttons generated by JS -->
+                </div>
+            </div>
+            
+            <div class="mt-4 pt-2 border-t flex justify-between items-center">
+                 <span class="text-sm text-gray-500">灰色代表已在座位上 (點擊可交換)</span>
+                 <button type="button" onclick="clearSingleSeat()" class="bg-red-100 text-red-700 px-4 py-2 rounded hover:bg-red-200 font-bold">清空此座位</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Default data
+        const defaultStudents = [
+            "01 林丞塏", "02 張昱翔", "03 王永騰", "04 方泊淳", "05 陳宇全",
+            "06 王自義", "07 陳俋邵", "08 蔡豐澤", "09 林佾致", "10 楊子易",
+            "11 劉東勳", "12 吳和諺", "13 黃苡欣", "14 林千玉", "15 林貝芸",
+            "16 張晴瑜", "17 江筠苡", "18 吳欣諭", "19 彭采玲", "20 陳湘緹",
+            "21 楊洧淋", "22 謝玉茹", "23 張喻喬", "24 王藝妤", "25 邱米詩"
+        ];
+
+        let students = [...defaultStudents];
+        const GRID_ROWS = 6;
+        const GRID_COLS = 6;
+        const TOTAL_GRID_SEATS = 36;
+        const TOTAL_SEATS = 38;
+
+        // Keys for LocalStorage
+        const STORAGE_KEY_CURRENT = 'seating_chart_current_v2';
+        const STORAGE_KEY_HISTORY = 'seating_chart_history_v2';
+
+        // State
+        let disabledIndices = new Set();
+        let isSetupMode = false;
+        let isTeacherView = false;
+        let currentGridState = new Array(TOTAL_SEATS).fill(null);
+        let currentSelectorTargetIndex = -1; 
+
+        // Colors
+        const colors = [
+            'bg-blue-100 border-blue-300 text-blue-900',
+            'bg-green-100 border-green-300 text-green-900',
+            'bg-yellow-100 border-yellow-300 text-yellow-900',
+            'bg-purple-100 border-purple-300 text-purple-900',
+            'bg-pink-100 border-pink-300 text-pink-900',
+            'bg-indigo-100 border-indigo-300 text-indigo-900'
+        ];
+
+        function init() {
+            loadCurrentState();
+        }
+
+        // --- Storage Logic ---
+        function saveCurrentState() {
+            const data = {
+                students: students,
+                gridState: currentGridState,
+                disabledIndices: Array.from(disabledIndices),
+                timestamp: new Date().getTime()
+            };
+            localStorage.setItem(STORAGE_KEY_CURRENT, JSON.stringify(data));
+        }
+
+        function loadCurrentState() {
+            const savedData = localStorage.getItem(STORAGE_KEY_CURRENT);
+            if (savedData) {
+                try {
+                    const data = JSON.parse(savedData);
+                    students = data.students || [...defaultStudents];
+                    currentGridState = data.gridState;
+                    if (data.disabledIndices) {
+                        disabledIndices = new Set(data.disabledIndices);
+                    }
+                    // Validation: resize if needed (though unlikely for this fixed app)
+                    if (currentGridState.length !== TOTAL_SEATS) {
+                        currentGridState = new Array(TOTAL_SEATS).fill(null);
+                    }
+                    renderSeats();
+                    return;
+                } catch (e) {
+                    console.error("Failed to load saved state", e);
+                }
+            }
+            // Fallback if no save
+            fillGridSequentially();
+            renderSeats();
+        }
+
+        function saveToHistory() {
+            showCustomModal("儲存紀錄", "請為這個座位表取個名字：", true, () => {
+                const nameInput = document.getElementById('confirmInput');
+                const name = nameInput.value.trim() || new Date().toLocaleString();
+                
+                const snapshot = {
+                    id: new Date().getTime(),
+                    name: name,
+                    students: [...students],
+                    gridState: [...currentGridState],
+                    disabledIndices: Array.from(disabledIndices),
+                    date: new Date().toLocaleString()
+                };
+
+                let history = getHistory();
+                history.unshift(snapshot); // Add to top
+                localStorage.setItem(STORAGE_KEY_HISTORY, JSON.stringify(history));
+                
+                showAlert("儲存成功！");
+            }, true); // Enable Input mode
+        }
+
+        function getHistory() {
+            const saved = localStorage.getItem(STORAGE_KEY_HISTORY);
+            return saved ? JSON.parse(saved) : [];
+        }
+
+        function restoreFromHistory(id) {
+            const history = getHistory();
+            const snapshot = history.find(item => item.id === id);
+            if (snapshot) {
+                if(confirm(`確定要還原「${snapshot.name}」的座位表嗎？\n目前的排版將會被覆蓋。`)) {
+                    students = [...snapshot.students];
+                    currentGridState = [...snapshot.gridState];
+                    disabledIndices = new Set(snapshot.disabledIndices);
+                    saveCurrentState(); // Auto-save the restored state
+                    renderSeats();
+                    closeHistoryModal();
+                }
+            }
+        }
+
+        function deleteHistoryItem(id) {
+            if(confirm("確定要刪除這筆紀錄嗎？")) {
+                let history = getHistory();
+                history = history.filter(item => item.id !== id);
+                localStorage.setItem(STORAGE_KEY_HISTORY, JSON.stringify(history));
+                renderHistoryList(); // Refresh list
+            }
+        }
+
+        // --- Core Logic (Updated to call saveCurrentState) ---
+
+        function fillGridSequentially() {
+            currentGridState = new Array(TOTAL_SEATS).fill(null);
+            let studentIdx = 0;
+            for (let i = 0; i < TOTAL_SEATS; i++) {
+                if (disabledIndices.has(i)) continue;
+                if (studentIdx < students.length) {
+                    currentGridState[i] = students[studentIdx];
+                    studentIdx++;
+                }
+            }
+            saveCurrentState();
+        }
+        
+        // --- Printing & Image Logic ---
+        function downloadImage() {
+            const element = document.getElementById("classroom-wrapper");
+            html2canvas(element, {
+                backgroundColor: "#ffffff",
+                scale: 2
+            }).then(canvas => {
+                const link = document.createElement('a');
+                link.download = '班級座位表.png';
+                link.href = canvas.toDataURL("image/png");
+                link.click();
+            }).catch(err => {
+                console.error("Image generation failed:", err);
+                showAlert("圖片產生失敗，請稍後再試。");
+            });
+        }
+
+        function handlePrint() {
+            const element = document.getElementById("classroom-wrapper");
+            const btn = document.getElementById('printBtn');
+            const originalContent = btn.innerHTML;
+            
+            btn.innerHTML = `<svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>處理中...`;
+            btn.classList.add('opacity-75', 'cursor-not-allowed');
+            
+            html2canvas(element, {
+                backgroundColor: "#ffffff",
+                scale: 2
+            }).then(canvas => {
+                const imgData = canvas.toDataURL("image/png");
+                const iframe = document.createElement('iframe');
+                iframe.style.position = 'fixed';
+                iframe.style.right = '0';
+                iframe.style.bottom = '0';
+                iframe.style.width = '0';
+                iframe.style.height = '0';
+                iframe.style.border = '0';
+                document.body.appendChild(iframe);
+                
+                const iframeDoc = iframe.contentWindow.document;
+                iframeDoc.open();
+                iframeDoc.write('<html><head><title>列印座位表</title></head><body style="margin:0; padding:0; display:flex; justify-content:center; align-items:center; height:100vh;">');
+                iframeDoc.write('<img src="' + imgData + '" style="max-width:100%; max-height:100%; height:auto; width:auto;">');
+                iframeDoc.write('</body></html>');
+                iframeDoc.close();
+                
+                setTimeout(() => {
+                    iframe.contentWindow.focus();
+                    try {
+                        iframe.contentWindow.print();
+                    } catch (e) {
+                        showAlert("自動列印被阻擋，請使用「下載圖片」功能。");
+                    }
+                    document.body.removeChild(iframe);
+                    btn.innerHTML = originalContent;
+                    btn.classList.remove('opacity-75', 'cursor-not-allowed');
+                }, 500);
+            }).catch(err => {
+                showAlert("列印準備失敗，請嘗試「下載圖片」。");
+                btn.innerHTML = originalContent;
+                btn.classList.remove('opacity-75', 'cursor-not-allowed');
+            });
+        }
+        
+        // --- Modal System ---
+        function showCustomModal(title, message, isConfirm, callback, hasInput = false) {
+            const modal = document.getElementById('confirmModal');
+            const titleEl = document.getElementById('confirmTitle');
+            const msgEl = document.getElementById('confirmMessage');
+            const cancelBtn = document.getElementById('confirmCancelBtn');
+            const okBtn = document.getElementById('confirmOkBtn');
+            const inputContainer = document.getElementById('inputContainer');
+            const inputField = document.getElementById('confirmInput');
+            
+            titleEl.textContent = title;
+            msgEl.textContent = message;
+            
+            okBtn.onclick = null;
+            
+            if (hasInput) {
+                inputContainer.classList.remove('hidden');
+                inputField.value = ''; // Reset input
+                inputField.focus();
+            } else {
+                inputContainer.classList.add('hidden');
+            }
+
+            if (isConfirm) {
+                cancelBtn.classList.remove('hidden');
+                okBtn.onclick = () => {
+                    closeConfirmModal();
+                    if (callback) callback();
+                };
+            } else {
+                cancelBtn.classList.add('hidden');
+                okBtn.onclick = () => {
+                    closeConfirmModal();
+                };
+            }
+
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+        }
+
+        function closeConfirmModal() {
+            const modal = document.getElementById('confirmModal');
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+        }
+
+        function showAlert(msg) {
+            showCustomModal("提示", msg, false, null);
+        }
+
+        function openHistoryModal() {
+            renderHistoryList();
+            const modal = document.getElementById('historyModal');
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+        }
+
+        function closeHistoryModal() {
+            const modal = document.getElementById('historyModal');
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+        }
+
+        function renderHistoryList() {
+            const list = document.getElementById('historyListContainer');
+            const history = getHistory();
+            list.innerHTML = '';
+            
+            if (history.length === 0) {
+                list.innerHTML = '<p class="text-center text-gray-500 py-4">尚無儲存的紀錄</p>';
+                return;
+            }
+
+            history.forEach(item => {
+                const div = document.createElement('div');
+                div.className = "flex justify-between items-center bg-gray-50 p-3 rounded border hover:bg-gray-100";
+                div.innerHTML = `
+                    <div>
+                        <div class="font-bold text-gray-800">${item.name}</div>
+                        <div class="text-xs text-gray-500">${item.date}</div>
+                    </div>
+                    <div class="flex gap-2">
+                        <button onclick="restoreFromHistory(${item.id})" class="bg-blue-100 text-blue-700 px-3 py-1 rounded text-sm font-bold hover:bg-blue-200">還原</button>
+                        <button onclick="deleteHistoryItem(${item.id})" class="bg-red-100 text-red-700 px-3 py-1 rounded text-sm font-bold hover:bg-red-200">刪除</button>
+                    </div>
+                `;
+                list.appendChild(div);
+            });
+        }
+
+        function confirmClearSeats() {
+            showCustomModal("確認清空", "確定要清空所有座位嗎？\n(包含講台兩側座位)", true, () => {
+                currentGridState = new Array(TOTAL_SEATS).fill(null);
+                saveCurrentState(); // Save change
+                renderSeats();
+            });
+        }
+        
+        function confirmResetOrder() {
+             showCustomModal("確認重置", "確定要按座號順序重新排列嗎？\n(包含講台兩側座位)", true, () => {
+                fillGridSequentially(); // This function calls saveCurrentState internally
+                renderSeats();
+            });
+        }
+
+        function toggleViewMode() {
+            isTeacherView = !isTeacherView;
+            const container = document.getElementById('classroom-wrapper');
+            const btn = document.getElementById('viewToggleBtn');
+            
+            if (isTeacherView) {
+                container.classList.add('teacher-view');
+                btn.classList.remove('bg-indigo-500', 'hover:bg-indigo-600');
+                btn.classList.add('bg-teal-600', 'hover:bg-teal-700');
+                btn.innerHTML = `
+                    <svg class="pointer-events-none" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                    視角：老師看學生
+                `;
+            } else {
+                container.classList.remove('teacher-view');
+                btn.classList.remove('bg-teal-600', 'hover:bg-teal-700');
+                btn.classList.add('bg-indigo-500', 'hover:bg-indigo-600');
+                btn.innerHTML = `
+                    <svg class="pointer-events-none" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                    視角：學生看黑板
+                `;
+            }
+        }
+
+        function shuffleSeats() {
+            const validIndices = [];
+            for (let i = 0; i < TOTAL_SEATS; i++) {
+                if (!disabledIndices.has(i)) validIndices.push(i);
+            }
+
+            if (students.length > validIndices.length) {
+                showAlert(`座位不足！\n學生人數：${students.length}\n可用座位：${validIndices.length}\n請啟用更多座位。`);
+                return;
+            }
+
+            let currentStudents = [...students];
+            
+            for (let i = currentStudents.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [currentStudents[i], currentStudents[j]] = [currentStudents[j], currentStudents[i]];
+            }
+
+            currentGridState = new Array(TOTAL_SEATS).fill(null);
+            
+            let slotsContent = [...currentStudents];
+            while (slotsContent.length < validIndices.length) {
+                slotsContent.push(null);
+            }
+
+            for (let i = slotsContent.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [slotsContent[i], slotsContent[j]] = [slotsContent[j], slotsContent[i]];
+            }
+
+            validIndices.forEach((gridIndex, i) => {
+                currentGridState[gridIndex] = slotsContent[i];
+            });
+
+            saveCurrentState(); // Save change
+            renderSeats();
+        }
+
+        function toggleSetupMode() {
+            isSetupMode = !isSetupMode;
+            const btn = document.getElementById('setupBtn');
+            const grid = document.getElementById('seatingGrid');
+            const podiumArea = document.getElementById('podium-area');
+            
+            if (isSetupMode) {
+                btn.classList.remove('bg-orange-500', 'hover:bg-orange-600');
+                btn.classList.add('bg-red-600', 'hover:bg-red-700');
+                btn.innerHTML = '完成設定';
+                grid.classList.add('setup-mode');
+                podiumArea.classList.add('setup-mode');
+            } else {
+                btn.classList.remove('bg-red-600', 'hover:bg-red-700');
+                btn.classList.add('bg-orange-500', 'hover:bg-orange-600');
+                btn.innerHTML = `<svg class="pointer-events-none" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg> 設定不可用座位`;
+                grid.classList.remove('setup-mode');
+                podiumArea.classList.remove('setup-mode');
+            }
+            renderSeats();
+        }
+
+        function toggleSeatDisable(index) {
+            if (disabledIndices.has(index)) {
+                disabledIndices.delete(index);
+            } else {
+                if (currentGridState[index] !== null) {
+                    showAlert("請先將此位子的學生移走，才能設為不可用。");
+                    return;
+                }
+                disabledIndices.add(index);
+            }
+            saveCurrentState(); // Save change
+            renderSeats();
+        }
+
+        // --- Rendering ---
+        function createSeatElement(i, student, isDisabled) {
+            const seatDiv = document.createElement('div');
+            seatDiv.setAttribute('data-index', i);
+            let classes = "seat aspect-[4/3] rounded-lg border-2 flex items-center justify-center relative shadow-sm w-full h-full";
+            
+            if (isDisabled) {
+                classes += " disabled-seat";
+                seatDiv.className = classes;
+                seatDiv.onclick = () => isSetupMode && toggleSeatDisable(i);
+            } else {
+                if (isSetupMode) {
+                    seatDiv.onclick = () => toggleSeatDisable(i);
+                    classes += " cursor-pointer";
+                } else {
+                    seatDiv.onclick = (e) => {
+                        if (seatDiv.classList.contains('dragging')) return;
+                        openSelectorModal(i);
+                    };
+                    classes += " cursor-pointer";
+                }
+
+                if (student) {
+                    const colorClass = colors[i % colors.length];
+                    classes += ` ${colorClass} ${!isSetupMode ? 'cursor-grab active:cursor-grabbing hover:shadow-md' : ''}`;
+                    
+                    let seatNum = "";
+                    let seatName = student;
+                    
+                    // Robust parsing: Handle spaces, tabs, or just a name
+                    const parts = student.trim().split(/\s+/);
+                    if (parts.length >= 2) {
+                        seatNum = parts[0];
+                        seatName = parts.slice(1).join(' ');
+                    } else {
+                        // If no number provided (just name), don't put it in the small gray box
+                        seatNum = ""; 
+                        seatName = parts[0];
+                    }
+
+                    seatDiv.innerHTML = `
+                        <div class="seat-content w-full h-full flex flex-col items-center justify-center p-2 text-center pointer-events-none">
+                            ${seatNum ? `<span class="text-xs text-gray-500 font-mono mb-1">${seatNum}</span>` : ''}
+                            <span class="text-xl font-bold text-gray-800 leading-tight">${seatName}</span>
+                        </div>
+                    `;
+                } else {
+                    classes += " bg-gray-100 border-gray-200 border-dashed hover:bg-gray-200";
+                    seatDiv.innerHTML = `<div class="flex flex-col items-center"><span class="seat-empty-text text-gray-400 font-bold text-sm md:text-lg select-none">選人</span></div>`;
+                }
+                
+                seatDiv.className = classes;
+
+                if (!isSetupMode && !isDisabled) {
+                    seatDiv.setAttribute('draggable', 'true');
+                    seatDiv.addEventListener('dragstart', handleDragStart);
+                    seatDiv.addEventListener('dragover', handleDragOver);
+                    seatDiv.addEventListener('drop', handleDrop);
+                    seatDiv.addEventListener('dragenter', handleDragEnter);
+                    seatDiv.addEventListener('dragleave', handleDragLeave);
+                    seatDiv.addEventListener('dragend', handleDragEnd);
+                }
+            }
+            return seatDiv;
+        }
+
+        function renderSeats() {
+            const grid = document.getElementById('seatingGrid');
+            const leftContainer = document.getElementById('special-seat-left');
+            const rightContainer = document.getElementById('special-seat-right');
+
+            grid.innerHTML = '';
+            leftContainer.innerHTML = '';
+            rightContainer.innerHTML = '';
+
+            for (let i = 0; i < TOTAL_SEATS; i++) {
+                const student = currentGridState[i];
+                const isDisabled = disabledIndices.has(i);
+                
+                const seatDiv = createSeatElement(i, student, isDisabled);
+
+                if (i < TOTAL_GRID_SEATS) {
+                    grid.appendChild(seatDiv);
+                } else if (i === TOTAL_GRID_SEATS) {
+                    seatDiv.classList.remove('w-full', 'h-full'); 
+                    seatDiv.classList.add('w-full', 'h-full');
+                    leftContainer.appendChild(seatDiv);
+                } else if (i === TOTAL_GRID_SEATS + 1) {
+                    seatDiv.classList.remove('w-full', 'h-full');
+                    seatDiv.classList.add('w-full', 'h-full');
+                    rightContainer.appendChild(seatDiv);
+                }
+            }
+        }
+
+        // --- Drag and Drop Logic ---
+        let dragSrcEl = null;
+        let dragSrcIndex = null;
+
+        function handleDragStart(e) {
+            dragSrcEl = this;
+            dragSrcIndex = parseInt(this.getAttribute('data-index'));
+            this.classList.add('dragging');
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/html', this.innerHTML);
+        }
+
+        function handleDragOver(e) {
+            if (e.preventDefault) e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            return false;
+        }
+
+        function handleDragEnter(e) {
+            this.classList.add('ring-2', 'ring-blue-500', 'ring-offset-2');
+        }
+
+        function handleDragLeave(e) {
+            this.classList.remove('ring-2', 'ring-blue-500', 'ring-offset-2');
+        }
+
+        function handleDrop(e) {
+            if (e.stopPropagation) e.stopPropagation();
+            this.classList.remove('ring-2', 'ring-blue-500', 'ring-offset-2');
+
+            const targetIndex = parseInt(this.getAttribute('data-index'));
+            if (disabledIndices.has(targetIndex)) return false;
+
+            if (dragSrcIndex !== targetIndex) {
+                const temp = currentGridState[dragSrcIndex];
+                currentGridState[dragSrcIndex] = currentGridState[targetIndex];
+                currentGridState[targetIndex] = temp;
+                saveCurrentState(); // Save change
+                renderSeats();
+            }
+            return false;
+        }
+
+        function handleDragEnd(e) {
+            this.classList.remove('dragging');
+            let items = document.querySelectorAll('.seat');
+            items.forEach(function (item) {
+                item.classList.remove('ring-2', 'ring-blue-500', 'ring-offset-2');
+            });
+        }
+
+        // --- Selector Modal Logic ---
+        function openSelectorModal(seatIndex) {
+            if (isSetupMode) return;
+            currentSelectorTargetIndex = seatIndex;
+            const modal = document.getElementById('selectorModal');
+            const grid = document.getElementById('studentSelectorGrid');
+            const targetText = document.getElementById('selectorTargetText');
+            const currentOccupant = currentGridState[seatIndex];
+            
+            let locText = "";
+            if (seatIndex < TOTAL_GRID_SEATS) {
+                const row = Math.floor(seatIndex / GRID_COLS) + 1;
+                const col = (seatIndex % GRID_COLS) + 1;
+                locText = `第 ${row} 排 / 第 ${col} 個位子`;
+            } else if (seatIndex === TOTAL_GRID_SEATS) {
+                locText = "講台左側座位";
+            } else {
+                locText = "講台右側座位";
+            }
+            
+            targetText.innerHTML = `正在安排位置：${locText}` + 
+                (currentOccupant ? ` (目前: ${currentOccupant})` : " (目前: 空)");
+
+            grid.innerHTML = '';
+            
+            students.forEach((student) => {
+                const existingIndex = currentGridState.indexOf(student);
+                const isCurrentSeat = existingIndex === seatIndex;
+                const isElsewhere = existingIndex !== -1 && !isCurrentSeat;
+                
+                const btn = document.createElement('button');
+                btn.className = `p-2 rounded text-left border text-sm font-medium transition flex flex-col items-start 
+                    ${isCurrentSeat ? 'bg-blue-600 text-white ring-2 ring-blue-300' : 
+                      isElsewhere ? 'bg-gray-100 text-gray-500 hover:bg-gray-200' : 
+                      'bg-white text-gray-800 border-gray-300 hover:bg-blue-50 hover:border-blue-400 shadow-sm'}`;
+                
+                let seatNum = "";
+                let seatName = student;
+                const parts = student.trim().split(/\s+/);
+                if (parts.length >= 2) {
+                    seatNum = parts[0];
+                    seatName = parts.slice(1).join(' ');
+                } else {
+                    seatName = parts[0];
+                }
+
+                let statusText = "";
+                if (isCurrentSeat) statusText = " (當前)";
+                if (isElsewhere) statusText = " (已入座)";
+                
+                btn.innerHTML = `
+                    <span class="text-xs opacity-70">${seatNum}</span>
+                    <span class="text-base truncate w-full">${seatName}</span>
+                    <span class="text-[10px] mt-1 opacity-60">${statusText}</span>
+                `;
+                
+                btn.onclick = () => selectStudentForSeat(student);
+                grid.appendChild(btn);
+            });
+            
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+        }
+
+        function closeSelectorModal() {
+            const modal = document.getElementById('selectorModal');
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+        }
+
+        function selectStudentForSeat(studentName) {
+            const targetIndex = currentSelectorTargetIndex;
+            const oldIndex = currentGridState.indexOf(studentName);
+            const currentOccupant = currentGridState[targetIndex]; 
+
+            if (oldIndex !== -1) {
+                if (oldIndex === targetIndex) {
+                    closeSelectorModal();
+                    return;
+                }
+                currentGridState[targetIndex] = studentName;
+                currentGridState[oldIndex] = currentOccupant; 
+            } else {
+                currentGridState[targetIndex] = studentName;
+            }
+            
+            saveCurrentState(); // Save change
+            renderSeats();
+            closeSelectorModal();
+        }
+        
+        function clearSingleSeat() {
+            if (currentSelectorTargetIndex !== -1) {
+                currentGridState[currentSelectorTargetIndex] = null;
+                saveCurrentState(); // Save change
+                renderSeats();
+                closeSelectorModal();
+            }
+        }
+
+        // --- Edit List Modal ---
+        function toggleEditModal() {
+            const modal = document.getElementById('editModal');
+            const textarea = document.getElementById('studentListInput');
+            
+            if (modal.classList.contains('hidden')) {
+                textarea.value = students.join('\n');
+                modal.classList.remove('hidden');
+                modal.classList.add('flex');
+            } else {
+                modal.classList.add('hidden');
+                modal.classList.remove('flex');
+            }
+        }
+
+        function saveStudentList() {
+            const textarea = document.getElementById('studentListInput');
+            const lines = textarea.value.split('\n');
+            students = lines.map(line => line.trim()).filter(line => line.length > 0);
+            toggleEditModal();
+            fillGridSequentially(); // Resets grid and saves
+            renderSeats();
+        }
+
+        init();
+    </script>
+</body>
+</html>
