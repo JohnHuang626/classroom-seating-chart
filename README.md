@@ -52,4 +52,4 @@
 
 無後端資料庫，所有資料僅暫存於您的瀏覽器中，關閉頁面即重置 (保障隱私)。
 
-Created by [您的名字] using AI Assistance# classroom-seating-chart
+Created by John using AI Assistance# classroom-seating-chart
